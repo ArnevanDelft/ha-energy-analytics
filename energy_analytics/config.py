@@ -76,13 +76,26 @@ HEATPUMP_RATED_W = 2600.0  # est. electrical input at rated Hz (TUNE ME)
 #            else ("dishwasher") to just measure a new device
 #   start /  ISO dates (local). end may be None = "still there".
 #   end
-PLUG_ASSIGNMENTS = [
+# Assignments are now managed at runtime in an editable JSON store (see
+# assignments.py / the dashboard). This list is only the one-time SEED used
+# when no store exists yet. Read assignments via config.plug_assignments().
+_DEFAULT_PLUG_ASSIGNMENTS = [
     # Innr SP 240 roaming plug. Set "start" to the day you place it on the
     # device and leave "end": None while it's there; add an end date (and a
     # new entry) when you move it on.
     {"plug": "sensor.energiemonitoring_vermogen", "device": "fridge",
      "start": "2026-06-13", "end": None},
 ]
+
+
+def plug_assignments():
+    """Current roaming-plug assignments (from the editable store, or the seed).
+
+    Read fresh on every call so the dashboard can mutate the store between
+    recomputes. Import is lazy to avoid a config<->assignments import cycle.
+    """
+    from . import assignments
+    return assignments.load()
 
 # --- State-profiled devices ------------------------------------------------
 # Devices with no power meter but a status in HA: each state gets a fixed

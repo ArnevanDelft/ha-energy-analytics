@@ -323,7 +323,7 @@ def assignment_mask(index: pd.DatetimeIndex, assignment: dict) -> pd.Series:
 def device_suppressed(index: pd.DatetimeIndex, device: str) -> pd.Series:
     """Mask of times where `device` is plug-measured (model must yield)."""
     out = pd.Series(False, index=index)
-    for a in config.PLUG_ASSIGNMENTS:
+    for a in config.plug_assignments():
         if a["device"] == device:
             out |= assignment_mask(index, a)
     return out

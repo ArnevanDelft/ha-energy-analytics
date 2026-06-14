@@ -61,7 +61,7 @@ def build_power_frame(loader_obj, start, end, freq=config.RESAMPLE) -> pd.DataFr
     # unchanged; only the attribution label moves.
     eid_to_col = {eid: name for name, eid in config.MEASURED_LOADS.items()}
     plugged_cols = []
-    for a in config.PLUG_ASSIGNMENTS:
+    for a in config.plug_assignments():
         col = eid_to_col.get(a["plug"])
         if col is None:
             extra = loader.load_many(loader_obj, [a["plug"]], start, end, freq)

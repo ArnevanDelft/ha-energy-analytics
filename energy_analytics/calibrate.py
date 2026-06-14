@@ -31,7 +31,7 @@ def _overlap(a, start, end):
 def calibrate(loader_obj, start, end, freq=config.RESAMPLE):
     start, end = loader._utc(start), loader._utc(end)
     any_output = False
-    for a in config.PLUG_ASSIGNMENTS:
+    for a in config.plug_assignments():
         win_start, win_end = _overlap(a, start, end)
         if win_start >= win_end:
             continue

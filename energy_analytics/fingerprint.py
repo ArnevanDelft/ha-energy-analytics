@@ -162,7 +162,7 @@ def save_from_assignments(loader_obj, start, end, freq=config.RESAMPLE,
     """Extract + save a fingerprint for every plug assignment in the window."""
     start, end = loader._utc(start), loader._utc(end)
     written = []
-    for a in config.PLUG_ASSIGNMENTS:
+    for a in config.plug_assignments():
         win_start = max(loader._utc(pd.Timestamp(a["start"], tz="Europe/Amsterdam")), start)
         win_end = min(
             loader._utc(pd.Timestamp(a["end"], tz="Europe/Amsterdam")) if a.get("end") else end,

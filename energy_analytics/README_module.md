@@ -69,16 +69,21 @@ These figures are only as good as the model. Tune in `config.py`:
 ## Roaming calibration plug
 
 Move a metering smart plug from device to device, a week at a time, and
-register each stay in `PLUG_ASSIGNMENTS` (config.py):
+register each stay as an *assignment*: `{plug, device, start, end|None}`
+(`end: None` = still attached).
+
+Assignments live in an **editable JSON store** (`assignments.py`), managed at
+runtime — easiest via the [energy-dashboard](../../energy-dashboard) UI, or
+programmatically:
 
 ```python
-PLUG_ASSIGNMENTS = [
-    {"plug": "sensor.innr_sp_240_vermogen", "device": "fridge",
-     "start": "2026-06-12", "end": "2026-06-19"},
-    {"plug": "sensor.innr_sp_240_vermogen", "device": "tv",
-     "start": "2026-06-19", "end": None},   # None = still there
-]
+from energy_analytics import assignments
+assignments.add("sensor.energiemonitoring_vermogen", "fridge", "2026-06-13")
 ```
+
+The store path is `$ENERGY_ASSIGNMENTS_FILE` (default next to the package). If
+the file doesn't exist yet, the seed in `config._DEFAULT_PLUG_ASSIGNMENTS` is
+used. All code reads assignments fresh via `config.plug_assignments()`.
 
 During an assignment the plug's measurement is attributed to that device and
 the overlapping model is silenced (the fridge heuristic, or the device's state

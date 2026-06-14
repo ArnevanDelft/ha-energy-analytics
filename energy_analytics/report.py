@@ -6,16 +6,8 @@ import pandas as pd
 
 from . import config, loader
 
-# Columns that represent end-use device power (must not overlap each other).
-DEVICE_COLS = (
-    ["heatpump_comp"]
-    + list(config.MEASURED_LOADS)
-    + sorted({f"plugged_{a['device']}" for a in config.PLUG_ASSIGNMENTS})
-    + list(config.STATE_PROFILES)
-    + ["lighting", "induction", "fridge", "other"]
-)
-
-PRETTY = {
+# Static labels for the non-plug device columns.
+_PRETTY_STATIC = {
     "heatpump_comp": "Heat pump (compressor, est.)",
     "heatpump_addheat": "Heat pump (backup heater)",
     "plug_sp240": "Smart plug SP240",
@@ -31,19 +23,38 @@ PRETTY = {
     "fridge": "Fridge (inferred)",
     "other": "Other / unattributed",
 }
-PRETTY.update({
-    f"plugged_{a['device']}": f"{a['device'].capitalize()} (plug-measured)"
-    for a in config.PLUG_ASSIGNMENTS
-})
+
+
+def device_cols() -> list[str]:
+    """End-use device columns (must not overlap). Computed per call so newly
+    added plug assignments show up without a reimport."""
+    plugged = sorted({f"plugged_{a['device']}" for a in config.plug_assignments()})
+    return (
+        ["heatpump_comp"]
+        + list(config.MEASURED_LOADS)
+        + plugged
+        + list(config.STATE_PROFILES)
+        + ["lighting", "induction", "fridge", "other"]
+    )
+
+
+def pretty_map() -> dict:
+    pretty = dict(_PRETTY_STATIC)
+    pretty.update({
+        f"plugged_{a['device']}": f"{a['device'].capitalize()} (plug-measured)"
+        for a in config.plug_assignments()
+    })
+    return pretty
 
 
 def breakdown_kwh(frame: pd.DataFrame, freq=config.RESAMPLE) -> pd.DataFrame:
-    cols = [c for c in DEVICE_COLS if c in frame]
+    pretty = pretty_map()
+    cols = [c for c in device_cols() if c in frame]
     kwh = loader.integrate_kwh(frame[cols], freq)
     total_cons = loader.integrate_kwh(frame["consumption"], freq)
     solar = loader.integrate_kwh(frame["solar_power"], freq)
     out = kwh.to_frame("kWh")
-    out.index = [PRETTY.get(c, c) for c in out.index]
+    out.index = [pretty.get(c, c) for c in out.index]
     out["%_of_consumption"] = (out["kWh"] / total_cons * 100).round(1)
     out = out.sort_values("kWh", ascending=False)
     out.loc["— TOTAL consumption —", "kWh"] = total_cons
@@ -53,13 +64,13 @@ def breakdown_kwh(frame: pd.DataFrame, freq=config.RESAMPLE) -> pd.DataFrame:
 
 def daily_kwh(frame: pd.DataFrame, freq=config.RESAMPLE) -> pd.DataFrame:
     """Per-day kWh per device (local time)."""
-    cols = [c for c in DEVICE_COLS if c in frame]
+    cols = [c for c in device_cols() if c in frame]
     step_h = pd.Timedelta(freq).total_seconds() / 3600.0
     energy = frame[cols] * step_h / 1000.0
     local = energy.copy()
     local.index = local.index.tz_convert("Europe/Amsterdam")
     daily = local.groupby(local.index.date).sum()
-    daily.columns = [PRETTY.get(c, c) for c in daily.columns]
+    daily.columns = [pretty_map().get(c, c) for c in daily.columns]
     return daily.round(2)
 
 
@@ -68,7 +79,7 @@ def plot(frame: pd.DataFrame, path: str, freq=config.RESAMPLE):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    cols = [c for c in DEVICE_COLS if c in frame]
+    cols = [c for c in device_cols() if c in frame]
     local = frame.copy()
     local.index = local.index.tz_convert("Europe/Amsterdam")
 
