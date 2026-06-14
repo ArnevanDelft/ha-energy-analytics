@@ -14,7 +14,6 @@ _PRETTY_STATIC = {
     "plug_schuur": "Smart plug schuur",
     "plug_woonkamer": "Smart plug woonkamer",
     "tv": "TV OLED935 (profiled)",
-    "bluesound_voorkamer": "Bluesound voorkamer (profiled)",
     "bluesound_eetkamer": "Bluesound eetkamer (profiled)",
     "nad_amp": "NAD C338 amp (profiled)",
     "ventilation": "WTW ventilation (profiled)",

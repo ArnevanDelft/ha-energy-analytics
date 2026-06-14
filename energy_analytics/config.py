@@ -107,13 +107,11 @@ STATE_PROFILES = {
         "watts": {"on": 120.0, "off": 0.5},
         "default": 0.5,
     },
-    "bluesound_voorkamer": {
-        "entity": "media_player.voorkamer",
-        "watts": {"playing": 15.0, "paused": 7.0, "idle": 6.0, "off": 3.0},
-        "default": 6.0,
-    },
+    # One Bluesound, in the eetkamer. Its HA entity_id is still
+    # media_player.voorkamer (only the friendly name/room changed), which is
+    # where the live data flows.
     "bluesound_eetkamer": {
-        "entity": "media_player.eetkamer",
+        "entity": "media_player.voorkamer",
         "watts": {"playing": 15.0, "paused": 7.0, "idle": 6.0, "off": 3.0},
         "default": 6.0,
     },
