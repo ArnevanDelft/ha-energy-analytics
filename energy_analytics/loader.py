@@ -18,6 +18,7 @@ step function (forward-fill onto a uniform grid), and scale kW->W where needed.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 
@@ -215,6 +216,7 @@ class InfluxLoader:
         self.url = f"http://{host}:{port}/query"
         self.params = {"db": database, "epoch": "ns"}
         self.session = requests.Session()
+        self.timeout = int(os.environ.get("INFLUX_TIMEOUT", "90"))
         if username:
             self.session.auth = (username, password or "")
 
@@ -241,12 +243,15 @@ class InfluxLoader:
         return _postprocess(raw, entity_id, start, end, freq)
 
     def _query_series(self, q, field) -> pd.Series:
-        resp = self.session.get(self.url, params={**self.params, "q": q}, timeout=60)
+        resp = self.session.get(self.url, params={**self.params, "q": q},
+                                timeout=self.timeout)
         resp.raise_for_status()
         results = resp.json().get("results", [{}])[0].get("series", [])
         frames = []
         for serie in results:
             cols = serie["columns"]
+            if field not in cols:
+                continue
             ti, vi = cols.index("time"), cols.index(field)
             vals = serie["values"]
             idx = pd.to_datetime([r[ti] for r in vals], unit="ns", utc=True)
@@ -254,18 +259,31 @@ class InfluxLoader:
         out = pd.concat(frames) if frames else pd.Series(dtype="object")
         return out.dropna()
 
+    def _query_frame(self, q) -> pd.DataFrame:
+        """Run a query once and return all fields as a time-indexed frame."""
+        resp = self.session.get(self.url, params={**self.params, "q": q},
+                                timeout=self.timeout)
+        resp.raise_for_status()
+        results = resp.json().get("results", [{}])[0].get("series", [])
+        frames = []
+        for serie in results:
+            df = pd.DataFrame(serie["values"], columns=serie["columns"])
+            df.index = pd.to_datetime(df["time"], unit="ns", utc=True)
+            frames.append(df.drop(columns=["time"]))
+        return pd.concat(frames) if frames else pd.DataFrame()
+
     def _time_clause(self, start, end, lookback_s=0):
         return (f"time >= {int(start.timestamp()*1e9) - int(lookback_s*1e9)} "
                 f"AND time <= {int(end.timestamp()*1e9)}")
 
     def load_states(self, entity_id, start, end, freq=config.RESAMPLE,
                     stale_hours=None) -> pd.Series:
-        """Non-numeric states live in the `state` field; for unit-less entities
-        the measurement is the full entity_id."""
+        """Non-numeric states live in the `state` field. Unit-less entities are
+        stored under a measurement named after the full entity_id, so we query
+        that measurement directly instead of scanning all of them with /.*/."""
         start, end = _utc(start), _utc(end)
-        oid = _object_id(entity_id)
-        q = (f'SELECT "state" FROM /.*/ WHERE "entity_id" = \'{oid}\' '
-             f"AND {self._time_clause(start, end, 7 * 86400)}")
+        q = (f'SELECT "state" FROM "{entity_id}" '
+             f"WHERE {self._time_clause(start, end, 7 * 86400)}")
         raw = self._query_series(q, "state")
         raw = raw[~raw.isin(config.NON_STATES)]
         out = _step_fill_states(raw, start, end, freq, stale_hours)
@@ -273,23 +291,19 @@ class InfluxLoader:
         return out
 
     def load_light(self, entity_id, start, end, freq=config.RESAMPLE) -> pd.Series:
-        """Brightness fraction (0..1). The HA influxdb integration writes the
-        on/off state to `state` and the brightness attribute as a field."""
+        """Brightness fraction (0..1). Lights are stored under a measurement
+        named after the entity_id, with `state` (on/off) and `brightness`
+        fields -- fetched in a single direct query."""
         start, end = _utc(start), _utc(end)
-        oid = _object_id(entity_id)
         tc = self._time_clause(start, end, 7 * 86400)
-        states = self._query_series(
-            f'SELECT "state" FROM /.*/ WHERE "entity_id" = \'{oid}\' AND {tc}',
-            "state")
-        try:
-            bright = self._query_series(
-                f'SELECT "brightness" FROM /.*/ WHERE "entity_id" = \'{oid}\' AND {tc}',
-                "brightness")
-        except requests.exceptions.HTTPError:
-            bright = pd.Series(dtype="float64")
+        q = f'SELECT "state","brightness" FROM "{entity_id}" WHERE {tc}'
+        df = self._query_frame(q)
         grid = pd.date_range(start=start, end=end, freq=freq, tz="UTC")
-        if states.empty:
+        if df.empty or "state" not in df:
             return pd.Series(0.0, index=grid, name=entity_id)
+        states = df["state"].dropna()
+        bright = (df["brightness"].dropna() if "brightness" in df
+                  else pd.Series(dtype="float64"))
         states = states[~states.isin(config.NON_STATES)]
         on = _step_fill_states(states, start, end, freq).eq("on")
         frac = pd.Series(1.0, index=grid)
