@@ -178,7 +178,10 @@ INDUCTION_HOURS = [(7, 9), (11, 14), (17, 21)]
 # remainder. Set FRIDGE_W if you know the plate rating to override detection.
 FRIDGE_TYPICAL_W = 90.0   # assumed running power of one fridge compressor
 FRIDGE_MAX_W = 250.0      # ceiling for what counts as fridge (vs other loads)
-FRIDGE_W = None           # set to a number to force a fixed running power
+# Measured from a roaming-plug week on the fridge (2026-06-13..22): ~29 W
+# running at 41% duty cycle. Overrides the typical estimate for periods
+# without the plug.
+FRIDGE_W = 29.0           # set to a number to force a fixed running power
 
 # --- Resampling -----------------------------------------------------------
 # All series are aligned onto a uniform grid before maths. 30 s keeps induction
