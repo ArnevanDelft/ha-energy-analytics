@@ -211,6 +211,10 @@ class SqliteLoader:
 class InfluxLoader:
     """Reads HA's live InfluxDB v1 over the HTTP query API (InfluxQL)."""
 
+    # entity object-id -> measurement (unit). Process-wide: the mapping is
+    # stable, so it survives the dashboard creating a fresh loader per recompute.
+    _MEAS_CACHE: dict[str, "str | None"] = {}
+
     def __init__(self, host="192.168.10.237", port=8086, database="homeassistant",
                  username="hauser", password=None):
         self.url = f"http://{host}:{port}/query"
@@ -220,6 +224,24 @@ class InfluxLoader:
         if username:
             self.session.auth = (username, password or "")
 
+    def _measurement(self, oid: str) -> str | None:
+        """Which measurement holds this entity (= its unit). Cached.
+
+        A cheap last() over /.*/ returns one series whose `name` is the
+        measurement; we then aggregate against that measurement directly,
+        avoiding a GROUP BY across all ~600 measurements.
+        """
+        if oid in self._MEAS_CACHE:
+            return self._MEAS_CACHE[oid]
+        q = f'SELECT last("value") FROM /.*/ WHERE "entity_id" = \'{oid}\''
+        resp = self.session.get(self.url, params={**self.params, "q": q},
+                                timeout=self.timeout)
+        resp.raise_for_status()
+        series = resp.json().get("results", [{}])[0].get("series", [])
+        meas = series[0]["name"] if series else None
+        self._MEAS_CACHE[oid] = meas
+        return meas
+
     @classmethod
     def from_env(cls) -> "InfluxLoader":
         """Build a loader from the INFLUX_* settings in config (env-driven)."""
@@ -227,20 +249,39 @@ class InfluxLoader:
                    config.INFLUX_USERNAME, config.INFLUX_PASSWORD)
 
     def load(self, entity_id, start, end, freq=config.RESAMPLE) -> pd.Series:
+        """Mean power per `freq` bucket, downsampled server-side.
+
+        Using `GROUP BY time(freq) fill(previous)` makes InfluxDB do the
+        aggregation, so a year-long window returns a few thousand points
+        instead of millions of raw samples. Mean power per bucket integrates
+        to the correct energy (mean W x dt = Wh).
+        """
         start, end = _utc(start), _utc(end)
-        # The HA integration tags rows with the object id (no domain prefix).
         oid = _object_id(entity_id)
-        # measurement is the unit; we don't know it up front, so match on the
-        # entity_id tag across measurements via a regex-free OR is awkward in
-        # InfluxQL -- instead query the value field grouped by the tag.
+        grid = pd.date_range(start=start, end=end, freq=freq, tz="UTC")
+        meas = self._measurement(oid)
+        if meas is None:
+            return pd.Series(0.0, index=grid, name=entity_id)
+        step_ns = int(pd.Timedelta(freq).total_seconds() * 1e9)
+        # A few buckets of look-back so fill(previous) can seed the first bucket.
+        lookback_ns = max(step_ns * 5, 3600_000_000_000)
         q = (
-            f'SELECT "value" FROM /.*/ '
+            f'SELECT mean("value") FROM "{meas}" '
             f"WHERE \"entity_id\" = '{oid}' "
-            f"AND time >= {int(start.timestamp()*1e9)-3600_000_000_000} "
-            f"AND time <= {int(end.timestamp()*1e9)}"
+            f"AND time >= {int(start.timestamp()*1e9) - lookback_ns} "
+            f"AND time <= {int(end.timestamp()*1e9)} "
+            f"GROUP BY time({freq}) fill(previous)"
         )
-        raw = self._query_series(q, "value")
-        return _postprocess(raw, entity_id, start, end, freq)
+        raw = self._query_series(q, "mean")
+        raw = pd.to_numeric(raw, errors="coerce").dropna()
+        if entity_id in config.KW_ENTITIES:
+            raw = raw * 1000.0
+        if raw.empty:
+            return pd.Series(0.0, index=grid, name=entity_id)
+        raw = raw[~raw.index.duplicated(keep="last")].sort_index()
+        out = raw.reindex(raw.index.union(grid)).ffill().reindex(grid).fillna(0.0)
+        out.name = entity_id
+        return out
 
     def _query_series(self, q, field) -> pd.Series:
         resp = self.session.get(self.url, params={**self.params, "q": q},
